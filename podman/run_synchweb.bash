@@ -8,6 +8,7 @@ Args          : -b - build the image
               : -s - copy setup scripts before run
               : -n <name> name of the container - default: 'synchweb-dev'
               : -7 use php version 7 instead of 5.4 when building the image
+              : -d <mount directory> directory in which dls is mounted - default /dls
               : -f tail the logs after start
 Prereq: For the pod to mount the images it needs to be mounted on the host
         filesystem in /dls.  You could mount this on your local filesystem 
@@ -21,34 +22,54 @@ trap 'code=$?; if ! [ $code -eq 0 ]; then echo "\"${last_command}\" command fail
 buildImage=0
 initialSetUp=0
 imageName=synchweb-dev
-phpVersion="5"
+phpVersion="7"
 finalCommand=""
-dls_dir="/dls"
-
+dls_dir="/blah"
+getdls=0
 for i in "$@"
 do
-case $i in
-    -b)
-    buildImage=1
-    ;;
-    -s)
-    initialSetUp=1
-    ;;
-    -7)
-    phpVersion="7"
-    ;;
-    -f)
-    finalCommand="logs"
-    ;;
-    -h|--help)
-    echo "$helpText"
-    exit
-    ;;
-    *)
-    imageName=$i
-    ;;
-esac
+    if [ $getdls -eq 1 ]
+    then
+        dls_dir=$i
+        getdls=0
+        if [ ! -d "$dls_dir" ]
+        then
+            echo "DLS dir not a directory ($dls_dir)"
+            exit
+        fi
+    else
+        case $i in
+            -b)
+            buildImage=1
+            ;;
+            -s)
+            initialSetUp=1
+            ;;
+            -7)
+            phpVersion="7"
+            ;;
+            -f)
+            finalCommand="logs"
+            ;;
+            -d) 
+            getdls=1
+            ;;
+            -h|--help)
+            echo "$helpText"
+            exit
+            ;;
+            *)
+            imageName=$i
+            ;;
+        esac
+    fi
 done
+
+if [ $getdls -ne 0 ]
+then
+   echo "No DLS dir given!"
+   exit
+fi
 
 echo Running podman image with name: $imageName
 
@@ -96,7 +117,10 @@ fi
 
 # If the dls directory exists then mount it into the container
 if [ -d "$dls_dir" ]; then
+    echo "DLS dir mounted: $dls_dir"
     mountDLS="--mount type=bind,source=$dls_dir,destination=/dls"
+else
+    echo "DLS dir NOT mounted is not a directory (tried $dls_dir)"
 fi
 
 # To stop composer rate limiting you create a public github token for composer and add it to the file .ssh/id_composer
@@ -105,11 +129,14 @@ composerTokenFile=~/.ssh/id_composer
 if [ -f "$composerTokenFile" ]; then
     token=`cat "$composerTokenFile"`
     COMPOSER_AUTH="{\"github-oauth\": { \"github.com\": \"$token\" } }"
+    echo Composer Token: Set
+else
+    echo Composer Token: None
 fi;
     
 echo
 echo Starting $imageName container as $imageName
-podman run --security-opt label=disable -it -p 8082:8082 \
+podman run --privileged --security-opt label=disable -it -p 8082:8082 \
     --env COMPOSER_AUTH="$COMPOSER_AUTH" \
     --mount type=bind,source=./SynchWeb,destination=/app/SynchWeb \
     $mountDLS \
